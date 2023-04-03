@@ -32,8 +32,18 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Text;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -161,8 +171,15 @@ public class PlayerProfileActivity extends AppCompatActivity {
                                 highestQrc.setText(Long.toString(highest));
                                 lowestQrc.setText(Long.toString(lowest));
                                 totalScore.setText(Long.toString(totalScoreValue));
-                                String filler = "TODO";
+
+
+
+                                String filler = "Loading...";
                                 ranking.setText(filler);
+
+
+
+
                                 totalCodesScanned.setText(Long.toString(totalCodesScannedValue));
                                 // find highest and lowest QR
                                 QRCode highestQR = new QRCode(null, -1, null, null, null, null, null);
@@ -182,8 +199,10 @@ public class PlayerProfileActivity extends AppCompatActivity {
                                 setViewButtons(highestQR, lowestQR);
 
                                 // set the view QR codes button to open a listview activity?
-
                                 setPlayerCodesScanned(QrList);
+
+                                // calculate ranking
+                                calculateRanking(db, deviceId, ranking);
 
                                 // show buttons now that querying is done
                                 showButtons();
@@ -238,6 +257,7 @@ public class PlayerProfileActivity extends AppCompatActivity {
      * @param highest the highest scoring QR code the player has scanned
      * @param lowest the lowest scoring QR code the player has scanned
      */
+
     public void setViewButtons(QRCode highest, QRCode lowest)
     {
         final QRCode finalLowestQR = lowest;
@@ -254,6 +274,10 @@ public class PlayerProfileActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * sets the button for view player's QR codes
+     * @param qrList the highest scoring QR code the player has scanned
+     */
     public void setPlayerCodesScanned(ArrayList<QRCode> qrList) {
         viewCodesScanned.setOnClickListener(v -> {
             Intent intent = new Intent(PlayerProfileActivity.this, ViewPlayerScannedQRActivity.class);
@@ -263,4 +287,87 @@ public class PlayerProfileActivity extends AppCompatActivity {
         });
 
     }
+    /**
+     * calculates the player's ranking for highest unique QR code
+     * @param db passed instance of firebase database
+     * @param deID the deviceId to calculate the ranking of
+     * @param rnk the textView to change once rank has been calculated
+     */
+    public void calculateRanking(FirebaseFirestore db, String deID, TextView rnk) {
+        // As a player, I want an estimate of my ranking for the highest scoring unique QR code
+        // 1. go through all players, get their highest QR code that only they scanned, store it in a dict
+        // query all player's deviceID, add them to a dict with highest = 0
+        Hashtable<String, Integer> deviceIdDict = new Hashtable<String, Integer>();
+        db.collection("Users").get().addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                List<DocumentSnapshot> documents = task.getResult().getDocuments();
+                for (DocumentSnapshot iterativeDocument : documents) {
+                    String deviceId = iterativeDocument.getId();
+                    deviceIdDict.put(deviceId, 0);
+                }
+                //2. Go through all playersScanned fields, find highest QR code that only they scanned
+                //Set<String> setofKeys = deviceIdDict.keySet();
+                //for (String key : setofKeys) {
+                    db.collection("QRCodes").get().addOnCompleteListener(newTask -> {
+                        if (newTask.isSuccessful()) {
+                            try {
+                                DocumentSnapshot test = newTask.getResult().getDocuments().get(0);
+                            }
+                            catch (IndexOutOfBoundsException e) {
+                                Log.d("myTag", "Nothing scanned");
+                            }
+                            // loop through QR codes where playersScanned contains DeviceID
+                            // check if ONLY they scanned it
+                            List<DocumentSnapshot> newTaskDocuments = newTask.getResult().getDocuments();
+                            for (DocumentSnapshot newDocument : newTaskDocuments) {
+                                ArrayList<String> pS = new ArrayList<>();
+                                pS = (ArrayList<String>) newDocument.get("playersScanned");
+                                int size = 0;
+                                try {
+                                     size = pS.size();
+                                }
+                                catch(Exception e) {
+                                    Log.d("myTag", "Nothing Scanned");
+                                }
+                                String stringSize = Integer.toString(size);
+                                if(stringSize.equals("1")) { // now we know that the only player who scanned it is the 'key'
+                                    String playerID = pS.get(0);
+                                    long points = (long) newDocument.get("Points");
+                                    int highestUnique = deviceIdDict.get(playerID);
+                                    if(points > highestUnique) {
+                                        highestUnique =  (int) points;
+                                        deviceIdDict.put(playerID, highestUnique);
+                                    }
+                                }
+                            }
+                            // we have a dict of highest uniques now (confirmed working), just need to sort it so (highest = index 0)
+                            // yeah I know this is ugly I used a bad datatype
+                            ArrayList<Integer> highestArrayList = new ArrayList<>();
+                            Collection<Integer> highestSet = deviceIdDict.values();
+                            highestArrayList.addAll(highestSet);
+                            Collections.sort(highestArrayList, Collections.reverseOrder());
+                            int playerScore = deviceIdDict.get(deID);
+                            String pS = Integer.toString(playerScore);
+                            int index = 1;
+                            for(int score : highestArrayList) {
+                                String s_score = Integer.toString(score);
+                                if(s_score.equals(pS)) {
+                                    Log.d("myTag", "SCORES" + s_score + pS);
+                                    String stringRank = Integer.toString(index);
+                                    rnk.setText(stringRank);
+                                    break;
+                                }
+                                else {
+                                    index += 1;
+                                }
+                            }
+                        }
+                    });
+                //}
+            }
+        }); // first query
+    }
 }
+
+
+
